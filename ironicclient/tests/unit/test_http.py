@@ -18,6 +18,7 @@ import json
 import mock
 import six
 
+from ironicclient.common import filecache
 from ironicclient.common import http
 from ironicclient import exc
 from ironicclient.tests.unit import utils
@@ -46,9 +47,12 @@ class VersionNegotiationMixinTest(utils.BaseTestCase):
         self.test_object = http.VersionNegotiationMixin()
         self.test_object.os_ironic_api_version = '1.6'
         self.test_object.api_version_select_state = 'default'
+        self.test_object.endpoint = "http://localhost:1234"
         self.mock_mcu = mock.MagicMock()
         self.test_object._make_connection_url = self.mock_mcu
         self.response = utils.FakeResponse({}, status=406)
+        self.test_object.get_server = mock.MagicMock(
+            return_value=('localhost', '1234'))
 
     def test__generic_parse_version_headers_has_headers(self):
         response = {'X-OpenStack-Ironic-API-Minimum-Version': '1.1',
@@ -64,40 +68,47 @@ class VersionNegotiationMixinTest(utils.BaseTestCase):
         result = self.test_object._generic_parse_version_headers(response.get)
         self.assertEqual(expected, result)
 
-    def test_negotiate_version_bad_state(self):
+    @mock.patch.object(filecache, 'save_data')
+    def test_negotiate_version_bad_state(self, mock_sd):
         # Test if bad api_version_select_state value
         self.test_object.api_version_select_state = 'word of the day: augur'
         self.assertRaises(
             RuntimeError,
             self.test_object.negotiate_version,
             None, None)
+        self.assertEqual(0, mock_sd.call_count)
 
+    @mock.patch.object(filecache, 'save_data')
     @mock.patch.object(http.VersionNegotiationMixin, '_parse_version_headers',
                        autospec=True)
-    def test_negotiate_version_server_older(self, mock_pvh):
+    def test_negotiate_version_server_older(self, mock_pvh, mock_sd):
         # Test newer client and older server
         mock_pvh.return_value = ('1.1', '1.5')
         mock_conn = mock.MagicMock()
         result = self.test_object.negotiate_version(mock_conn, self.response)
         self.assertEqual('1.5', result)
         self.assertEqual(1, mock_pvh.call_count)
+        self.assertEqual(1, mock_sd.call_count)
 
+    @mock.patch.object(filecache, 'save_data')
     @mock.patch.object(http.VersionNegotiationMixin, '_parse_version_headers',
                        autospec=True)
-    def test_negotiate_version_server_newer(self, mock_pvh):
+    def test_negotiate_version_server_newer(self, mock_pvh, mock_sd):
         # Test newer server and older client
         mock_pvh.return_value = ('1.1', '99.99')
         mock_conn = mock.MagicMock()
         result = self.test_object.negotiate_version(mock_conn, self.response)
         self.assertEqual('1.6', result)
         self.assertEqual(1, mock_pvh.call_count)
+        self.assertEqual(1, mock_sd.call_count)
 
+    @mock.patch.object(filecache, 'save_data')
     @mock.patch.object(http.VersionNegotiationMixin, '_make_simple_request',
                        autospec=True)
     @mock.patch.object(http.VersionNegotiationMixin, '_parse_version_headers',
                        autospec=True)
     def test_negotiate_version_server_no_version_on_error(
-            self, mock_pvh, mock_msr):
+            self, mock_pvh, mock_msr, mock_sd):
         # Test older Ironic version which errored with no version number and
         # have to retry with simple get
         mock_pvh.side_effect = iter([(None, None), ('1.1', '1.2')])
@@ -106,10 +117,13 @@ class VersionNegotiationMixinTest(utils.BaseTestCase):
         self.assertEqual('1.2', result)
         self.assertTrue(mock_msr.called)
         self.assertEqual(2, mock_pvh.call_count)
+        self.assertEqual(1, mock_sd.call_count)
 
+    @mock.patch.object(filecache, 'save_data')
     @mock.patch.object(http.VersionNegotiationMixin, '_parse_version_headers',
                        autospec=True)
-    def test_negotiate_version_server_explicit_too_high(self, mock_pvh):
+    def test_negotiate_version_server_explicit_too_high(self, mock_pvh,
+                                                        mock_sd):
         # requested version is not supported because it is too large
         mock_pvh.return_value = ('1.1', '1.6')
         mock_conn = mock.MagicMock()
@@ -120,10 +134,13 @@ class VersionNegotiationMixinTest(utils.BaseTestCase):
             self.test_object.negotiate_version,
             mock_conn, self.response)
         self.assertEqual(1, mock_pvh.call_count)
+        self.assertEqual(0, mock_sd.call_count)
 
+    @mock.patch.object(filecache, 'save_data')
     @mock.patch.object(http.VersionNegotiationMixin, '_parse_version_headers',
                        autospec=True)
-    def test_negotiate_version_server_explicit_not_supported(self, mock_pvh):
+    def test_negotiate_version_server_explicit_not_supported(self, mock_pvh,
+                                                             mock_sd):
         # requested version is supported by the server but the server returned
         # 406 because the requested operation is not supported with the
         # requested version
@@ -136,6 +153,7 @@ class VersionNegotiationMixinTest(utils.BaseTestCase):
             self.test_object.negotiate_version,
             mock_conn, self.response)
         self.assertEqual(1, mock_pvh.call_count)
+        self.assertEqual(0, mock_sd.call_count)
 
 
 class HttpClientTest(utils.BaseTestCase):
@@ -316,6 +334,12 @@ class HttpClientTest(utils.BaseTestCase):
                     {'timeout': DEFAULT_TIMEOUT})
         params = http.HTTPClient.get_connection_params(endpoint)
         self.assertEqual(expected, params)
+
+    def test_get_server(self):
+        host = 'ironic-host'
+        port = '6385'
+        endpoint = 'http://%s:%s/ironic/v1/' % (host, port)
+        self.assertEqual((host, port), http.get_server(endpoint))
 
     def test_401_unauthorized_exception(self):
         error_body = _get_error_body()
