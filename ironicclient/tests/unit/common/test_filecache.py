@@ -29,12 +29,14 @@ class FileCacheTest(utils.BaseTestCase):
         result = filecache._build_key(None, None)
         self.assertEqual('None:None', result)
 
+    @mock.patch.object(os.path.environ, 'get', autospec=True)
     @mock.patch.object(os.path, 'exists', autospec=True)
     @mock.patch.object(os, 'makedirs', autospec=True)
     @mock.patch.object(dogpile.cache, 'make_region', autospec=True)
     def test__get_cache_mkdir(self, mock_makeregion, mock_makedirs,
-                              mock_exists):
+                              mock_exists, mock_get):
         cache_val = 6
+        mock_get.return_value = None
         filecache.CACHE = None
         mock_exists.return_value = False
         cache_region = mock.Mock(spec=dogpile.cache.region.CacheRegion)
@@ -43,6 +45,26 @@ class FileCacheTest(utils.BaseTestCase):
         self.assertEqual(cache_val, filecache._get_cache())
         mock_exists.assert_called_once_with(filecache.CACHE_DIR)
         mock_makedirs.assert_called_once_with(filecache.CACHE_DIR)
+        cache_region.configure.assert_called_once_with(mock.ANY, filecache.DEFAULT_EXPIRY, mock.ANY)
+
+    @mock.patch.object(os.path.environ, 'get', autospec=True)
+    @mock.patch.object(os.path, 'exists', autospec=True)
+    @mock.patch.object(os, 'makedirs', autospec=True)
+    @mock.patch.object(dogpile.cache, 'make_region', autospec=True)
+    def test__get_cache_mkdir_expiry_set(self, mock_makeregion, mock_makedirs,
+                              mock_exists, mock_get):
+        cache_val = 5643
+        cache_expiry = 78
+        mock_get.return_value = cache_expiry
+        filecache.CACHE = None
+        mock_exists.return_value = False
+        cache_region = mock.Mock(spec=dogpile.cache.region.CacheRegion)
+        cache_region.configure.return_value = cache_val
+        mock_makeregion.return_value = cache_region
+        self.assertEqual(cache_val, filecache._get_cache())
+        mock_exists.assert_called_once_with(filecache.CACHE_DIR)
+        mock_makedirs.assert_called_once_with(filecache.CACHE_DIR)
+        cache_region.configure.assert_called_once_with(mock.ANY, cache_expiry, mock.ANY)
 
     @mock.patch.object(os.path, 'exists', autospec=True)
     @mock.patch.object(os, 'makedirs', autospec=True)

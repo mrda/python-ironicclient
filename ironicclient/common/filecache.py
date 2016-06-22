@@ -38,9 +38,14 @@ def _get_cache():
         if not os.path.exists(CACHE_DIR):
             os.makedirs(CACHE_DIR)
 
+        # Use the cache expiry if specified in the environment
+        expiry_time = os.environ.get('PYTHON_IRONICCLIENT_CACHE_EXPIRY')
+        if not expiry_time:
+            expiry_time = DEFAULT_EXPIRY
+
         CACHE = dogpile.cache.make_region(key_mangler=str).configure(
             'dogpile.cache.dbm',
-            expiration_time=DEFAULT_EXPIRY,
+            expiration_time=expiry_time,
             arguments={
                 "filename": CACHE_FILENAME,
             }
